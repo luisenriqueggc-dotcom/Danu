@@ -100,6 +100,24 @@ export default function Page() {
     return `En ${diff} días`;
   }
 
+  async function marcarRegado(containerId: string) {
+  try {
+    const res = await fetch("/api/regado", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ containerId }),
+    });
+
+    const text = await res.text();
+    if (!res.ok) throw new Error(text);
+
+    window.location.reload();
+  } catch (err: any) {
+    console.error(err);
+    alert(`Error al marcar como regado:\n${err?.message ?? err}`);
+  }
+}
+
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-50 p-5">
       <div className="max-w-2xl mx-auto">
@@ -146,6 +164,12 @@ export default function Page() {
               </div>
 
               <div className="mt-3 flex items-center justify-between">
+                <button
+                  onClick={() => marcarRegado(r["Container ID"])}
+                   className="mt-3 w-full rounded-xl bg-green-600 py-2 font-semibold text-white hover:bg-green-700 transition"
+                    >
+                      💧 Regado
+                    </button>
                 <div className="text-neutral-200">
                   Próximo riego:{" "}
                   <span className="font-semibold">{r["Próximo riego"]}</span>
