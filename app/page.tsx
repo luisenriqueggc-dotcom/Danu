@@ -19,13 +19,30 @@ function normalizeHeader(h: string) {
   return h.trim();
 }
 
-function parseDateDMY(s: string): Date | null {
-  const m = s?.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!m) return null;
-  const dd = Number(m[1]);
-  const mm = Number(m[2]);
-  const yyyy = Number(m[3]);
-  return new Date(yyyy, mm - 1, dd);
+// ✅ Soporta "dd/mm/yyyy" y serial de Sheets (ej. 46065)
+function parseDateFlexible(s: string): Date | null {
+  const v = (s ?? "").toString().trim();
+  if (!v) return null;
+
+  // Caso 1: dd/mm/yyyy
+  const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) {
+    const dd = Number(m[1]);
+    const mm = Number(m[2]);
+    const yyyy = Number(m[3]);
+    return new Date(yyyy, mm - 1, dd);
+  }
+
+  // Caso 2: serial numérico (Google Sheets)
+  if (/^\d+(\.\d+)?$/.test(v)) {
+    const serial = Number(v);
+    // Base de Google Sheets: 1899-12-30
+    const base = new Date(Date.UTC(1899, 11, 30));
+    const ms = serial * 24 * 60 * 60 * 1000;
+    return new Date(base.getTime() + ms);
+  }
+
+  return null;
 }
 
 function daysDiff(a: Date, b: Date) {
@@ -45,6 +62,7 @@ export default function Page() {
     try {
       setLoading(true);
       setError(null);
+      setRows([]); // ✅ evita mostrar datos viejos mientras carga
 
       // cache-buster
       const url = `${CSV_URL}&t=${Date.now()}`;
@@ -87,14 +105,14 @@ export default function Page() {
   const agenda = useMemo(() => {
     return rows
       .map((r) => {
-        const d = parseDateDMY(r["Próximo riego"]);
+        const d = parseDateFlexible(r["Próximo riego"]);
         const diff = d ? daysDiff(today, d) : 9999;
         return { ...r, _diff: diff };
       })
       // seguridad: solo hoy + 2 días
       .filter((r: any) => r._diff <= 2)
       .sort((a: any, b: any) => a._diff - b._diff);
-  }, [rows]);
+  }, [rows, today]);
 
   function badge(state: string) {
     const s = (state || "").toLowerCase();
@@ -124,6 +142,9 @@ export default function Page() {
 
       const text = await res.text();
       if (!res.ok) throw new Error(text);
+
+      // ✅ dale un momento a Google Sheets/CSV para reflejar cambios
+      await new Promise((r) => setTimeout(r, 600));
 
       // Recarga suave (sin reload)
       await load();
@@ -163,55 +184,62 @@ export default function Page() {
         )}
 
         <div className="mt-6 grid gap-3">
+          {loading && (
+            <div className="p-4 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-300">
+              Actualizando agenda…
+            </div>
+          )}
+
           {!error && agenda.length === 0 && !loading && (
             <div className="p-4 rounded-xl bg-neutral-900 border border-neutral-800">
               Todo en orden ✨ No hay riegos urgentes.
             </div>
           )}
 
-          {agenda.map((r: any) => (
-            <div
-              key={r["Container ID"]}
-              className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-xl font-semibold">
-                    {r["Nombre contenedor"] || r["Container ID"]}
+          {!loading &&
+            agenda.map((r: any) => (
+              <div
+                key={r["Container ID"]}
+                className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xl font-semibold">
+                      {r["Nombre contenedor"] || r["Container ID"]}
+                    </div>
+                    <div className="text-neutral-300 mt-1">
+                      {r["Ubicación"]} · {r["Zona"]}
+                    </div>
                   </div>
-                  <div className="text-neutral-300 mt-1">
-                    {r["Ubicación"]} · {r["Zona"]}
-                  </div>
+
+                  <span
+                    className={`px-3 py-1 rounded-full text-sm font-semibold ${badge(
+                      r["Estado contenedor"]
+                    )}`}
+                  >
+                    {r["Estado contenedor"] || "—"}
+                  </span>
                 </div>
 
-                <span
-                  className={`px-3 py-1 rounded-full text-sm font-semibold ${badge(
-                    r["Estado contenedor"]
-                  )}`}
-                >
-                  {r["Estado contenedor"] || "—"}
-                </span>
-              </div>
-
-              <div className="mt-3 grid gap-2">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-neutral-200">
-                    Próximo riego:{" "}
-                    <span className="font-semibold">{r["Próximo riego"]}</span>
+                <div className="mt-3 grid gap-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-neutral-200">
+                      Próximo riego:{" "}
+                      <span className="font-semibold">{r["Próximo riego"]}</span>
+                    </div>
+                    <div className="text-neutral-400">{urgencyText(r._diff)}</div>
                   </div>
-                  <div className="text-neutral-400">{urgencyText(r._diff)}</div>
-                </div>
 
-                <button
-                  onClick={() => marcarRegado(r["Container ID"])}
-                  disabled={markingId === r["Container ID"]}
-                  className="w-full rounded-xl bg-green-600 py-2 font-semibold text-white hover:bg-green-700 transition disabled:opacity-60 disabled:hover:bg-green-600"
-                >
-                  {markingId === r["Container ID"] ? "Marcando…" : "💧 Regado"}
-                </button>
+                  <button
+                    onClick={() => marcarRegado(r["Container ID"])}
+                    disabled={markingId === r["Container ID"]}
+                    className="w-full rounded-xl bg-green-600 py-2 font-semibold text-white hover:bg-green-700 transition disabled:opacity-60 disabled:hover:bg-green-600"
+                  >
+                    {markingId === r["Container ID"] ? "Marcando…" : "💧 Regado"}
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
         </div>
 
         <footer className="mt-10 text-sm text-neutral-500">
