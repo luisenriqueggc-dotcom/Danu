@@ -1,30 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Papa from "papaparse";
 
 type Row = {
   "Container ID": string;
   "Nombre contenedor": string;
   "Ubicación": string;
   "Zona": string;
-  "Próximo riego": string;
+  "Próximo riego": string | number;
   "Estado contenedor": string;
 };
 
-const CSV_URL =
-  "https://docs.google.com/spreadsheets/d/e/2PACX-1vRiJMWPL5vUJGS7p5uy-CyOW2pasM5JgAknprxbM0tf_GGtxaUfUca8HFNsridfaNyTsO3YKEfrTXkF/pub?gid=466265064&single=true&output=csv";
-
-function normalizeHeader(h: string) {
-  return h.trim();
-}
-
-// ✅ Soporta "dd/mm/yyyy" y serial de Sheets (ej. 46065)
-function parseDateFlexible(s: string): Date | null {
+function parseDateFlexible(s: string | number): Date | null {
   const v = (s ?? "").toString().trim();
   if (!v) return null;
 
-  // Caso 1: dd/mm/yyyy
+  // dd/mm/yyyy
   const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) {
     const dd = Number(m[1]);
@@ -33,10 +24,9 @@ function parseDateFlexible(s: string): Date | null {
     return new Date(yyyy, mm - 1, dd);
   }
 
-  // Caso 2: serial numérico (Google Sheets)
+  // serial sheets
   if (/^\d+(\.\d+)?$/.test(v)) {
     const serial = Number(v);
-    // Base de Google Sheets: 1899-12-30
     const base = new Date(Date.UTC(1899, 11, 30));
     const ms = serial * 24 * 60 * 60 * 1000;
     return new Date(base.getTime() + ms);
@@ -59,42 +49,23 @@ export default function Page() {
   const [markingId, setMarkingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (loading) return; // evita doble click spam
     try {
       setLoading(true);
       setError(null);
-      setRows([]); // ✅ evita mostrar datos viejos mientras carga
 
-      // cache-buster
-      const url = `${CSV_URL}&t=${Date.now()}`;
-      const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) throw new Error(`Error HTTP ${res.status}`);
-
+      const res = await fetch(`/api/agenda?t=${Date.now()}`, { cache: "no-store" });
       const text = await res.text();
+      if (!res.ok) throw new Error(text);
 
-      const parsed = Papa.parse<Record<string, string>>(text, {
-        header: true,
-        skipEmptyLines: true,
-        transformHeader: normalizeHeader,
-      });
-
-      const data = (parsed.data || [])
-        .map((r) => ({
-          "Container ID": r["Container ID"] ?? "",
-          "Nombre contenedor": r["Nombre contenedor"] ?? "",
-          "Ubicación": r["Ubicación"] ?? "",
-          "Zona": r["Zona"] ?? "",
-          "Próximo riego": r["Próximo riego"] ?? "",
-          "Estado contenedor": r["Estado contenedor"] ?? "",
-        }))
-        .filter((r) => r["Container ID"]);
-
-      setRows(data);
+      const json = JSON.parse(text) as { rows: Row[] };
+      setRows(Array.isArray(json.rows) ? json.rows : []);
     } catch (e: any) {
       setError(e?.message ?? "Error cargando datos");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loading]);
 
   useEffect(() => {
     load();
@@ -109,7 +80,6 @@ export default function Page() {
         const diff = d ? daysDiff(today, d) : 9999;
         return { ...r, _diff: diff };
       })
-      // seguridad: solo hoy + 2 días
       .filter((r: any) => r._diff <= 2)
       .sort((a: any, b: any) => a._diff - b._diff);
   }, [rows, today]);
@@ -133,6 +103,9 @@ export default function Page() {
     try {
       setMarkingId(containerId);
 
+      // ✅ Optimistic UI: quita la tarjeta al instante
+      setRows((prev) => prev.filter((r) => r["Container ID"] !== containerId));
+
       const res = await fetch("/api/regado", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -143,14 +116,14 @@ export default function Page() {
       const text = await res.text();
       if (!res.ok) throw new Error(text);
 
-      // ✅ dale un momento a Google Sheets/CSV para reflejar cambios
-      await new Promise((r) => setTimeout(r, 600));
-
-      // Recarga suave (sin reload)
+      // ✅ re-sincroniza después (por si algo cambió en agenda)
+      await new Promise((r) => setTimeout(r, 500));
       await load();
     } catch (err: any) {
       console.error(err);
       alert(`Error al marcar como regado:\n${err?.message ?? err}`);
+      // si falló, recarga para volver al estado real
+      await load();
     } finally {
       setMarkingId(null);
     }
@@ -225,7 +198,9 @@ export default function Page() {
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-neutral-200">
                       Próximo riego:{" "}
-                      <span className="font-semibold">{r["Próximo riego"]}</span>
+                      <span className="font-semibold">
+                        {r["Próximo riego"]}
+                      </span>
                     </div>
                     <div className="text-neutral-400">{urgencyText(r._diff)}</div>
                   </div>
