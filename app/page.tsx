@@ -1,65 +1,167 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useEffect, useMemo, useState } from "react";
+import Papa from "papaparse";
+
+type Row = {
+  "Container ID": string;
+  "Nombre contenedor": string;
+  "Ubicación": string;
+  "Zona": string;
+  "Próximo riego": string;
+  "Estado contenedor": string;
+};
+
+function normalizeHeader(h: string) {
+  return h.trim();
+}
+
+function parseDateDMY(s: string): Date | null {
+  const m = s?.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  const dd = Number(m[1]);
+  const mm = Number(m[2]);
+  const yyyy = Number(m[3]);
+  return new Date(yyyy, mm - 1, dd);
+}
+
+function daysDiff(a: Date, b: Date) {
+  const ms = 24 * 60 * 60 * 1000;
+  const utcA = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
+  const utcB = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
+  return Math.round((utcB - utcA) / ms);
+}
+
+export default function Page() {
+  // 👇 Pega aquí tu URL CSV publicada de la hoja "Agenda"
+  const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRiJMWPL5vUJGS7p5uy-CyOW2pasM5JgAknprxbM0tf_GGtxaUfUca8HFNsridfaNyTsO3YKEfrTXkF/pub?gid=466265064&single=true&output=csv";
+
+  const [rows, setRows] = useState<Row[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await fetch(CSV_URL, { cache: "no-store" });
+        if (!res.ok) throw new Error(`Error HTTP ${res.status}`);
+        const text = await res.text();
+
+        const parsed = Papa.parse<Record<string, string>>(text, {
+          header: true,
+          skipEmptyLines: true,
+          transformHeader: normalizeHeader,
+        });
+
+        const data = (parsed.data || [])
+          .map((r) => ({
+            "Container ID": r["Container ID"] ?? "",
+            "Nombre contenedor": r["Nombre contenedor"] ?? "",
+            "Ubicación": r["Ubicación"] ?? "",
+            "Zona": r["Zona"] ?? "",
+            "Próximo riego": r["Próximo riego"] ?? "",
+            "Estado contenedor": r["Estado contenedor"] ?? "",
+          }))
+          .filter((r) => r["Container ID"]);
+
+        setRows(data);
+      } catch (e: any) {
+        setError(e?.message ?? "Error cargando datos");
+      }
+    }
+    load();
+  }, [CSV_URL]);
+
+  const today = new Date();
+
+  const agenda = useMemo(() => {
+    return rows
+      .map((r) => {
+        const d = parseDateDMY(r["Próximo riego"]);
+        const diff = d ? daysDiff(today, d) : 9999;
+        return { ...r, _diff: diff };
+      })
+      // seguridad: solo hoy+2 días
+      .filter((r: any) => r._diff <= 2)
+      .sort((a: any, b: any) => a._diff - b._diff);
+  }, [rows]);
+
+  function badge(state: string) {
+    const s = (state || "").toLowerCase();
+    if (s.includes("rojo")) return "bg-red-600 text-white";
+    if (s.includes("amarillo")) return "bg-yellow-400 text-black";
+    return "bg-green-600 text-white";
+  }
+
+  function urgencyText(diff: number) {
+    if (diff < 0) return "Atrasado";
+    if (diff === 0) return "Hoy";
+    if (diff === 1) return "Mañana";
+    if (diff === 2) return "En 2 días";
+    return `En ${diff} días`;
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <main className="min-h-screen bg-neutral-950 text-neutral-50 p-5">
+      <div className="max-w-2xl mx-auto">
+        <h1 className="text-3xl font-semibold">DANU · Agenda de riego</h1>
+        <p className="text-neutral-300 mt-2">
+          Lo que toca regar hoy y en los próximos 2 días.
+        </p>
+
+        {error && (
+          <div className="mt-4 p-4 rounded-xl bg-red-900/40 border border-red-700">
+            {error}
+          </div>
+        )}
+
+        <div className="mt-6 grid gap-3">
+          {agenda.length === 0 && !error && (
+            <div className="p-4 rounded-xl bg-neutral-900 border border-neutral-800">
+              Todo en orden ✨ No hay riegos urgentes.
+            </div>
+          )}
+
+          {agenda.map((r: any) => (
+            <div
+              key={r["Container ID"]}
+              className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800"
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xl font-semibold">
+                    {r["Nombre contenedor"] || r["Container ID"]}
+                  </div>
+                  <div className="text-neutral-300 mt-1">
+                    {r["Ubicación"]} · {r["Zona"]}
+                  </div>
+                </div>
+
+                <span
+                  className={`px-3 py-1 rounded-full text-sm font-semibold ${badge(
+                    r["Estado contenedor"]
+                  )}`}
+                >
+                  {r["Estado contenedor"] || "—"}
+                </span>
+              </div>
+
+              <div className="mt-3 flex items-center justify-between">
+                <div className="text-neutral-200">
+                  Próximo riego:{" "}
+                  <span className="font-semibold">{r["Próximo riego"]}</span>
+                </div>
+                <div className="text-neutral-400">
+                  {urgencyText(r._diff)}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+
+        <footer className="mt-10 text-sm text-neutral-500">
+          DANU MVP · Datos desde Google Sheets
+        </footer>
+      </div>
+    </main>
   );
 }
