@@ -42,7 +42,8 @@ export default function Page() {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch(CSV_URL, { cache: "no-store" });
+        const url = `${CSV_URL}${CSV_URL.includes("?") ? "&" : "?"}t=${Date.now()}`;
+        const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) throw new Error(`Error HTTP ${res.status}`);
         const text = await res.text();
 
