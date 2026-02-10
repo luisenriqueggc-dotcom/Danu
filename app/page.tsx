@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Row = {
   "Container ID": string;
@@ -10,6 +10,9 @@ type Row = {
   "Próximo riego": string | number;
   "Estado contenedor": string;
 };
+
+// ✅ evita requests duplicadas/race conditions (StrictMode / refresh / clicks)
+let inFlight: AbortController | null = null;
 
 function parseDateFlexible(s: string | number): Date | null {
   const v = (s ?? "").toString().trim();
@@ -21,7 +24,7 @@ function parseDateFlexible(s: string | number): Date | null {
     return isNaN(d.getTime()) ? null : d;
   }
 
-  // 2) yyyy-mm-dd (por si acaso)
+  // 2) yyyy-mm-dd
   if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
     const d = new Date(v + "T00:00:00");
     return isNaN(d.getTime()) ? null : d;
@@ -48,7 +51,6 @@ function parseDateFlexible(s: string | number): Date | null {
 }
 
 function daysDiff(a: Date, b: Date) {
-  // Comparación por día (UTC) para evitar broncas de horario
   const ms = 24 * 60 * 60 * 1000;
   const utcA = Date.UTC(a.getUTCFullYear(), a.getUTCMonth(), a.getUTCDate());
   const utcB = Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate());
@@ -61,26 +63,46 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [markingId, setMarkingId] = useState<string | null>(null);
 
+  // ✅ evita doble load del useEffect en dev (StrictMode)
+  const didMount = useRef(false);
+
   const load = useCallback(async () => {
-    if (loading) return;
+    // cancela request anterior si aún no termina
+    if (inFlight) inFlight.abort();
+    const ac = new AbortController();
+    inFlight = ac;
+
     try {
       setLoading(true);
       setError(null);
 
-      const res = await fetch(`/api/agenda?t=${Date.now()}`, { cache: "no-store" });
+      const res = await fetch(`/api/agenda?t=${Date.now()}`, {
+        cache: "no-store",
+        signal: ac.signal,
+      });
+
       const text = await res.text();
       if (!res.ok) throw new Error(text);
 
       const json = JSON.parse(text) as { rows: Row[] };
-      setRows(Array.isArray(json.rows) ? json.rows : []);
+      const nextRows = Array.isArray(json.rows) ? json.rows : [];
+
+      // 🛡️ Si llega vacío por timing/caché, no pises datos ya mostrados
+      if (nextRows.length === 0 && rows.length > 0) return;
+
+      setRows(nextRows);
     } catch (e: any) {
+      if (e?.name === "AbortError") return; // normal al cancelar
       setError(e?.message ?? "Error cargando datos");
     } finally {
+      if (inFlight === ac) inFlight = null;
       setLoading(false);
     }
-  }, [loading]);
+  }, [rows.length]);
 
   useEffect(() => {
+    if (didMount.current) return;
+    didMount.current = true;
     load();
   }, [load]);
 
