@@ -15,7 +15,19 @@ function parseDateFlexible(s: string | number): Date | null {
   const v = (s ?? "").toString().trim();
   if (!v) return null;
 
-  // dd/mm/yyyy
+  // 1) ISO: 2026-02-11T06:00:00.000Z (o similar)
+  if (/^\d{4}-\d{2}-\d{2}T/.test(v)) {
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // 2) yyyy-mm-dd (por si acaso)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+    const d = new Date(v + "T00:00:00");
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // 3) dd/mm/yyyy
   const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) {
     const dd = Number(m[1]);
@@ -24,7 +36,7 @@ function parseDateFlexible(s: string | number): Date | null {
     return new Date(yyyy, mm - 1, dd);
   }
 
-  // serial sheets
+  // 4) serial de Sheets (ej. 46065)
   if (/^\d+(\.\d+)?$/.test(v)) {
     const serial = Number(v);
     const base = new Date(Date.UTC(1899, 11, 30));
@@ -36,9 +48,10 @@ function parseDateFlexible(s: string | number): Date | null {
 }
 
 function daysDiff(a: Date, b: Date) {
+  // Comparación por día (UTC) para evitar broncas de horario
   const ms = 24 * 60 * 60 * 1000;
-  const utcA = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
-  const utcB = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
+  const utcA = Date.UTC(a.getUTCFullYear(), a.getUTCMonth(), a.getUTCDate());
+  const utcB = Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate());
   return Math.round((utcB - utcA) / ms);
 }
 
@@ -49,7 +62,7 @@ export default function Page() {
   const [markingId, setMarkingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (loading) return; // evita doble click spam
+    if (loading) return;
     try {
       setLoading(true);
       setError(null);
@@ -99,11 +112,17 @@ export default function Page() {
     return `En ${diff} días`;
   }
 
+  function formatDate(d: string | number) {
+    const parsed = parseDateFlexible(d);
+    if (!parsed) return String(d ?? "");
+    return parsed.toLocaleDateString("es-MX");
+  }
+
   async function marcarRegado(containerId: string) {
     try {
       setMarkingId(containerId);
 
-      // ✅ Optimistic UI: quita la tarjeta al instante
+      // Optimistic UI: lo quita al instante
       setRows((prev) => prev.filter((r) => r["Container ID"] !== containerId));
 
       const res = await fetch("/api/regado", {
@@ -116,13 +135,13 @@ export default function Page() {
       const text = await res.text();
       if (!res.ok) throw new Error(text);
 
-      // ✅ re-sincroniza después (por si algo cambió en agenda)
+      // espera breve para que Sheets actualice
       await new Promise((r) => setTimeout(r, 500));
+
       await load();
     } catch (err: any) {
       console.error(err);
       alert(`Error al marcar como regado:\n${err?.message ?? err}`);
-      // si falló, recarga para volver al estado real
       await load();
     } finally {
       setMarkingId(null);
@@ -199,7 +218,7 @@ export default function Page() {
                     <div className="text-neutral-200">
                       Próximo riego:{" "}
                       <span className="font-semibold">
-                        {r["Próximo riego"]}
+                        {formatDate(r["Próximo riego"])}
                       </span>
                     </div>
                     <div className="text-neutral-400">{urgencyText(r._diff)}</div>
