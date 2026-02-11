@@ -59,6 +59,7 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [markingId, setMarkingId] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
+  const splashStart = useRef(Date.now());
 
   const didMount = useRef(false);
 
@@ -157,8 +158,17 @@ export default function Page() {
       alert(`Error al marcar como regado:\n${err?.message ?? err}`);
       await load();
     } finally {
-      setMarkingId(null);
-    }
+  if (inFlight === ac) inFlight = null;
+  setLoading(false);
+
+  const elapsed = Date.now() - splashStart.current;
+  const minDuration = 6000; // 6 segundos
+  const remaining = Math.max(minDuration - elapsed, 0);
+
+  setTimeout(() => {
+    setInitialLoading(false);
+  }, remaining);
+}
   }
 
   return (

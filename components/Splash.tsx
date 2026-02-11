@@ -23,10 +23,6 @@ export default function Splash({ visible }: { visible: boolean }) {
       >
         <source src="/splash.mp4" type="video/mp4" />
       </video>
-
-      <div className="relative z-10 text-white text-4xl font-semibold tracking-wide">
-        DANU
-      </div>
     </div>
   );
 }
