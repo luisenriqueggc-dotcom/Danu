@@ -1,5 +1,6 @@
 "use client";
 
+import Splash from "../components/Splash";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Row = {
@@ -11,26 +12,22 @@ type Row = {
   "Estado contenedor": string;
 };
 
-// ✅ evita requests duplicadas/race conditions (StrictMode / refresh / clicks)
 let inFlight: AbortController | null = null;
 
 function parseDateFlexible(s: string | number): Date | null {
   const v = (s ?? "").toString().trim();
   if (!v) return null;
 
-  // 1) ISO: 2026-02-11T06:00:00.000Z (o similar)
   if (/^\d{4}-\d{2}-\d{2}T/.test(v)) {
     const d = new Date(v);
     return isNaN(d.getTime()) ? null : d;
   }
 
-  // 2) yyyy-mm-dd
   if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
     const d = new Date(v + "T00:00:00");
     return isNaN(d.getTime()) ? null : d;
   }
 
-  // 3) dd/mm/yyyy
   const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) {
     const dd = Number(m[1]);
@@ -39,7 +36,6 @@ function parseDateFlexible(s: string | number): Date | null {
     return new Date(yyyy, mm - 1, dd);
   }
 
-  // 4) serial de Sheets (ej. 46065)
   if (/^\d+(\.\d+)?$/.test(v)) {
     const serial = Number(v);
     const base = new Date(Date.UTC(1899, 11, 30));
@@ -62,12 +58,11 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [markingId, setMarkingId] = useState<string | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
 
-  // ✅ evita doble load del useEffect en dev (StrictMode)
   const didMount = useRef(false);
 
   const load = useCallback(async () => {
-    // cancela request anterior si aún no termina
     if (inFlight) inFlight.abort();
     const ac = new AbortController();
     inFlight = ac;
@@ -87,16 +82,16 @@ export default function Page() {
       const json = JSON.parse(text) as { rows: Row[] };
       const nextRows = Array.isArray(json.rows) ? json.rows : [];
 
-      // 🛡️ Si llega vacío por timing/caché, no pises datos ya mostrados
       if (nextRows.length === 0 && rows.length > 0) return;
 
       setRows(nextRows);
     } catch (e: any) {
-      if (e?.name === "AbortError") return; // normal al cancelar
+      if (e?.name === "AbortError") return;
       setError(e?.message ?? "Error cargando datos");
     } finally {
       if (inFlight === ac) inFlight = null;
       setLoading(false);
+      setInitialLoading(false); // 👈 Splash desaparece aquí
     }
   }, [rows.length]);
 
@@ -121,13 +116,13 @@ export default function Page() {
 
   function badge(state: string) {
     const s = (state || "").toLowerCase();
-    if (s.includes("rojo")) return "bg-red-600 text-white";
+    if (s.includes("rojo")) return "bg-red-500 text-white";
     if (s.includes("amarillo")) return "bg-yellow-400 text-black";
-    return "bg-green-600 text-white";
+    return "bg-green-500 text-white";
   }
 
   function urgencyText(diff: number) {
-    if (diff < 0) return "Atrasado";
+    if (diff < 0) return "Necesita agua";
     if (diff === 0) return "Hoy";
     if (diff === 1) return "Mañana";
     if (diff === 2) return "En 2 días";
@@ -143,8 +138,6 @@ export default function Page() {
   async function marcarRegado(containerId: string) {
     try {
       setMarkingId(containerId);
-
-      // Optimistic UI: lo quita al instante
       setRows((prev) => prev.filter((r) => r["Container ID"] !== containerId));
 
       const res = await fetch("/api/regado", {
@@ -157,9 +150,7 @@ export default function Page() {
       const text = await res.text();
       if (!res.ok) throw new Error(text);
 
-      // espera breve para que Sheets actualice
       await new Promise((r) => setTimeout(r, 500));
-
       await load();
     } catch (err: any) {
       console.error(err);
@@ -171,57 +162,54 @@ export default function Page() {
   }
 
   return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-50 p-5">
-      <div className="max-w-2xl mx-auto">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-3xl font-semibold">DANU · Agenda de riego</h1>
-            <p className="text-neutral-300 mt-2">
-              Lo que toca regar hoy y en los próximos 2 días.
-            </p>
+    <>
+      <Splash visible={initialLoading} />
+
+      <main className="min-h-screen bg-gradient-to-b from-amber-50 via-lime-50 to-emerald-50 p-6 text-stone-700">
+        <div className="max-w-2xl mx-auto">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h1 className="text-3xl font-semibold text-emerald-700">
+                DANU · Agenda de riego
+              </h1>
+              <p className="mt-2 text-stone-600">
+                Lo que necesita cuidado hoy y en los próximos días.
+              </p>
+            </div>
+
+            <button
+              onClick={load}
+              className="rounded-xl bg-white shadow-sm border border-emerald-200 px-3 py-2 text-sm hover:bg-emerald-50 transition disabled:opacity-60"
+              disabled={loading}
+            >
+              {loading ? "Actualizando…" : "↻ Actualizar"}
+            </button>
           </div>
 
-          <button
-            onClick={load}
-            className="rounded-xl bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm text-neutral-200 hover:bg-neutral-800 transition disabled:opacity-60"
-            disabled={loading}
-            title="Actualizar"
-          >
-            {loading ? "Actualizando…" : "↻ Actualizar"}
-          </button>
-        </div>
-
-        {error && (
-          <div className="mt-4 p-4 rounded-xl bg-red-900/40 border border-red-700">
-            {error}
-          </div>
-        )}
-
-        <div className="mt-6 grid gap-3">
-          {loading && (
-            <div className="p-4 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-300">
-              Actualizando agenda…
+          {error && (
+            <div className="mt-4 p-4 rounded-xl bg-red-100 border border-red-300 text-red-700">
+              {error}
             </div>
           )}
 
-          {!error && agenda.length === 0 && !loading && (
-            <div className="p-4 rounded-xl bg-neutral-900 border border-neutral-800">
-              Todo en orden ✨ No hay riegos urgentes.
-            </div>
-          )}
+          <div className="mt-6 grid gap-4">
+            {!error && agenda.length === 0 && !loading && (
+              <div className="p-4 rounded-xl bg-white shadow-sm border border-emerald-100">
+                🌿 Hoy las plantas descansan
+              </div>
+            )}
 
-          {!loading &&
-            agenda.map((r: any) => (
+            {agenda.map((r: any) => (
               <div
                 key={r["Container ID"]}
-                className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800"
+                className="p-5 rounded-2xl bg-white shadow-sm border border-emerald-100"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-xl font-semibold">
+                    <div className="text-xl font-semibold text-emerald-700">
                       {r["Nombre contenedor"] || r["Container ID"]}
                     </div>
-                    <div className="text-neutral-300 mt-1">
+                    <div className="mt-1 text-stone-500">
                       {r["Ubicación"]} · {r["Zona"]}
                     </div>
                   </div>
@@ -235,33 +223,36 @@ export default function Page() {
                   </span>
                 </div>
 
-                <div className="mt-3 grid gap-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-neutral-200">
+                <div className="mt-4 grid gap-2">
+                  <div className="flex items-center justify-between">
+                    <div>
                       Próximo riego:{" "}
                       <span className="font-semibold">
                         {formatDate(r["Próximo riego"])}
                       </span>
                     </div>
-                    <div className="text-neutral-400">{urgencyText(r._diff)}</div>
+                    <div className="text-stone-500">
+                      {urgencyText(r._diff)}
+                    </div>
                   </div>
 
                   <button
                     onClick={() => marcarRegado(r["Container ID"])}
                     disabled={markingId === r["Container ID"]}
-                    className="w-full rounded-xl bg-green-600 py-2 font-semibold text-white hover:bg-green-700 transition disabled:opacity-60 disabled:hover:bg-green-600"
+                    className="w-full rounded-xl bg-emerald-500 py-2 font-semibold text-white hover:bg-emerald-600 transition disabled:opacity-60"
                   >
-                    {markingId === r["Container ID"] ? "Marcando…" : "💧 Regado"}
+                    {markingId === r["Container ID"] ? "Cuidando…" : "💧 Ya recibió agua"}
                   </button>
                 </div>
               </div>
             ))}
-        </div>
+          </div>
 
-        <footer className="mt-10 text-sm text-neutral-500">
-          DANU MVP · Datos desde Google Sheets
-        </footer>
-      </div>
-    </main>
+          <footer className="mt-10 text-sm text-stone-500">
+            DANU · Tecnología que germina
+          </footer>
+        </div>
+      </main>
+    </>
   );
 }
