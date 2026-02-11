@@ -90,10 +90,14 @@ export default function Page() {
       if (e?.name === "AbortError") return;
       setError(e?.message ?? "Error cargando datos");
     } finally {
-      if (inFlight === ac) inFlight = null;
-      setLoading(false);
-      setInitialLoading(false); // 👈 Splash desaparece aquí
-    }
+  if (inFlight === ac) inFlight = null;
+  setLoading(false);
+
+  // ⏳ Forzar mínimo 6 segundos de splash
+  setTimeout(() => {
+    setInitialLoading(false);
+  }, 6000);
+}
   }, [rows.length]);
 
   useEffect(() => {
@@ -158,17 +162,8 @@ export default function Page() {
       alert(`Error al marcar como regado:\n${err?.message ?? err}`);
       await load();
     } finally {
-  if (inFlight === ac) inFlight = null;
-  setLoading(false);
-
-  const elapsed = Date.now() - splashStart.current;
-  const minDuration = 6000; // 6 segundos
-  const remaining = Math.max(minDuration - elapsed, 0);
-
-  setTimeout(() => {
-    setInitialLoading(false);
-  }, remaining);
-}
+      setMarkingId(null);
+    }
   }
 
   return (
