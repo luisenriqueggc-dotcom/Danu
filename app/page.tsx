@@ -96,7 +96,7 @@ export default function Page() {
   // ⏳ Forzar mínimo 6 segundos de splash
   setTimeout(() => {
     setInitialLoading(false);
-  }, 6000);
+  }, 5000);
 }
   }, [rows.length]);
 
