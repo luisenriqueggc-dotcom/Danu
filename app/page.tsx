@@ -12,22 +12,26 @@ type Row = {
   "Estado contenedor": string;
 };
 
+// ✅ evita requests duplicadas/race conditions
 let inFlight: AbortController | null = null;
 
 function parseDateFlexible(s: string | number): Date | null {
   const v = (s ?? "").toString().trim();
   if (!v) return null;
 
+  // 1) ISO
   if (/^\d{4}-\d{2}-\d{2}T/.test(v)) {
     const d = new Date(v);
     return isNaN(d.getTime()) ? null : d;
   }
 
+  // 2) yyyy-mm-dd
   if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
     const d = new Date(v + "T00:00:00");
     return isNaN(d.getTime()) ? null : d;
   }
 
+  // 3) dd/mm/yyyy
   const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) {
     const dd = Number(m[1]);
@@ -36,6 +40,7 @@ function parseDateFlexible(s: string | number): Date | null {
     return new Date(yyyy, mm - 1, dd);
   }
 
+  // 4) serial de Sheets
   if (/^\d+(\.\d+)?$/.test(v)) {
     const serial = Number(v);
     const base = new Date(Date.UTC(1899, 11, 30));
@@ -58,12 +63,17 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [markingId, setMarkingId] = useState<string | null>(null);
+
+  // Splash control
   const [initialLoading, setInitialLoading] = useState(true);
   const splashStart = useRef(Date.now());
+  const splashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ✅ evita doble load del useEffect en dev
   const didMount = useRef(false);
 
   const load = useCallback(async () => {
+    // cancela request anterior si aún no termina
     if (inFlight) inFlight.abort();
     const ac = new AbortController();
     inFlight = ac;
@@ -83,27 +93,38 @@ export default function Page() {
       const json = JSON.parse(text) as { rows: Row[] };
       const nextRows = Array.isArray(json.rows) ? json.rows : [];
 
+      // 🛡️ Si llega vacío por timing/caché, no pises datos ya mostrados
       if (nextRows.length === 0 && rows.length > 0) return;
 
       setRows(nextRows);
     } catch (e: any) {
-      if (e?.name === "AbortError") return;
+      if (e?.name === "AbortError") return; // normal al cancelar
       setError(e?.message ?? "Error cargando datos");
     } finally {
-  if (inFlight === ac) inFlight = null;
-  setLoading(false);
+      if (inFlight === ac) inFlight = null;
+      setLoading(false);
 
-  // ⏳ Forzar mínimo 6 segundos de splash
-  setTimeout(() => {
-    setInitialLoading(false);
-  }, 5000);
-}
+      // ⏳ Splash mínimo 6s desde que inició
+      const elapsed = Date.now() - splashStart.current;
+      const minDuration = 4000;
+      const remaining = Math.max(minDuration - elapsed, 0);
+
+      if (splashTimer.current) clearTimeout(splashTimer.current);
+      splashTimer.current = setTimeout(() => {
+        setInitialLoading(false);
+      }, remaining);
+    }
   }, [rows.length]);
 
   useEffect(() => {
     if (didMount.current) return;
     didMount.current = true;
     load();
+
+    return () => {
+      if (splashTimer.current) clearTimeout(splashTimer.current);
+      if (inFlight) inFlight.abort();
+    };
   }, [load]);
 
   const today = new Date();
@@ -143,6 +164,8 @@ export default function Page() {
   async function marcarRegado(containerId: string) {
     try {
       setMarkingId(containerId);
+
+      // Optimistic UI: lo quita al instante
       setRows((prev) => prev.filter((r) => r["Container ID"] !== containerId));
 
       const res = await fetch("/api/regado", {
@@ -236,9 +259,7 @@ export default function Page() {
                         {formatDate(r["Próximo riego"])}
                       </span>
                     </div>
-                    <div className="text-stone-500">
-                      {urgencyText(r._diff)}
-                    </div>
+                    <div className="text-stone-500">{urgencyText(r._diff)}</div>
                   </div>
 
                   <button
@@ -246,7 +267,9 @@ export default function Page() {
                     disabled={markingId === r["Container ID"]}
                     className="w-full rounded-xl bg-emerald-500 py-2 font-semibold text-white hover:bg-emerald-600 transition disabled:opacity-60"
                   >
-                    {markingId === r["Container ID"] ? "Cuidando…" : "💧 Ya recibió agua"}
+                    {markingId === r["Container ID"]
+                      ? "Cuidando…"
+                      : "💧 Ya recibió agua"}
                   </button>
                 </div>
               </div>
