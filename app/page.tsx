@@ -1,7 +1,7 @@
 "use client";
 
-import BeeSwarm from "./components/BeeSwarm";
-import Splash from "./components/Splash";
+import BeeSwarm from "../components/BeeSwarm";
+import Splash from "../components/Splash";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Row = {
