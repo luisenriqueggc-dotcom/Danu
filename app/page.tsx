@@ -64,13 +64,37 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [markingId, setMarkingId] = useState<string | null>(null);
 
-  // Splash control
-  const [initialLoading, setInitialLoading] = useState(true);
-  const splashStart = useRef(Date.now());
-  const splashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ✅ PERFIL (puntos)
+  const [perfil, setPerfil] = useState<{ puntos: number; riegos: number } | null>(
+    null
+  );
+
+  // ✅ Splash: mínimo 6s + hasta que haya “primera carga”
+  const [minSplashDone, setMinSplashDone] = useState(false);
+  const [dataReady, setDataReady] = useState(false);
+  const dataReadyOnce = useRef(false);
 
   // ✅ evita doble load del useEffect en dev
   const didMount = useRef(false);
+
+  const loadPerfil = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/perfil?t=${Date.now()}`, { cache: "no-store" });
+      const text = await res.text();
+      if (!res.ok) throw new Error(text);
+
+      const json = JSON.parse(text);
+      const p = json?.perfil;
+
+      setPerfil({
+        puntos: Number(p?.puntos ?? 0),
+        riegos: Number(p?.riegos ?? 0),
+      });
+    } catch (e) {
+      // no bloquea UI si falla perfil
+      console.error("Error cargando perfil:", e);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     // cancela request anterior si aún no termina
@@ -104,28 +128,33 @@ export default function Page() {
       if (inFlight === ac) inFlight = null;
       setLoading(false);
 
-      // ⏳ Splash mínimo 6s desde que inició
-      const elapsed = Date.now() - splashStart.current;
-      const minDuration = 4000;
-      const remaining = Math.max(minDuration - elapsed, 0);
-
-      if (splashTimer.current) clearTimeout(splashTimer.current);
-      splashTimer.current = setTimeout(() => {
-        setInitialLoading(false);
-      }, remaining);
+      // ✅ Marca “ya hubo 1 carga” (éxito o error)
+      if (!dataReadyOnce.current) {
+        dataReadyOnce.current = true;
+        setDataReady(true);
+      }
     }
   }, [rows.length]);
 
   useEffect(() => {
+    // ⏳ Timer independiente: mínimo 6s sí o sí
+    const t = setTimeout(() => setMinSplashDone(true), 6000);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
     if (didMount.current) return;
     didMount.current = true;
+
     load();
+    loadPerfil();
 
     return () => {
-      if (splashTimer.current) clearTimeout(splashTimer.current);
       if (inFlight) inFlight.abort();
     };
-  }, [load]);
+  }, [load, loadPerfil]);
+
+  const splashVisible = !(minSplashDone && dataReady);
 
   const today = new Date();
 
@@ -178,12 +207,16 @@ export default function Page() {
       const text = await res.text();
       if (!res.ok) throw new Error(text);
 
+      // espera breve para que Sheets actualice
       await new Promise((r) => setTimeout(r, 500));
+
       await load();
+      await loadPerfil(); // ✅ refresca puntos/riegos
     } catch (err: any) {
       console.error(err);
       alert(`Error al marcar como regado:\n${err?.message ?? err}`);
       await load();
+      await loadPerfil();
     } finally {
       setMarkingId(null);
     }
@@ -191,7 +224,7 @@ export default function Page() {
 
   return (
     <>
-      <Splash visible={initialLoading} />
+      <Splash visible={splashVisible} />
 
       <main className="min-h-screen bg-gradient-to-b from-amber-50 via-lime-50 to-emerald-50 p-6 text-stone-700">
         <div className="max-w-2xl mx-auto">
@@ -203,10 +236,25 @@ export default function Page() {
               <p className="mt-2 text-stone-600">
                 Lo que necesita cuidado hoy y en los próximos días.
               </p>
+
+              {/* ✅ Puntos / Riegos */}
+              {perfil && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <div className="px-4 py-2 rounded-full bg-amber-100 text-amber-800 font-semibold shadow-sm border border-amber-200">
+                    🐝 {perfil.puntos} pts
+                  </div>
+                  <div className="px-4 py-2 rounded-full bg-sky-100 text-sky-800 font-semibold shadow-sm border border-sky-200">
+                    💧 {perfil.riegos} riegos
+                  </div>
+                </div>
+              )}
             </div>
 
             <button
-              onClick={load}
+              onClick={async () => {
+                await load();
+                await loadPerfil();
+              }}
               className="rounded-xl bg-white shadow-sm border border-emerald-200 px-3 py-2 text-sm hover:bg-emerald-50 transition disabled:opacity-60"
               disabled={loading}
             >
