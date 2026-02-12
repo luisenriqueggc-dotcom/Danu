@@ -1,6 +1,7 @@
 "use client";
 
-import Splash from "../components/Splash";
+import BeeSwarm from "./components/BeeSwarm";
+import Splash from "./components/Splash";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Row = {
@@ -91,13 +92,11 @@ export default function Page() {
         riegos: Number(p?.riegos ?? 0),
       });
     } catch (e) {
-      // no bloquea UI si falla perfil
       console.error("Error cargando perfil:", e);
     }
   }, []);
 
   const load = useCallback(async () => {
-    // cancela request anterior si aún no termina
     if (inFlight) inFlight.abort();
     const ac = new AbortController();
     inFlight = ac;
@@ -122,13 +121,13 @@ export default function Page() {
 
       setRows(nextRows);
     } catch (e: any) {
-      if (e?.name === "AbortError") return; // normal al cancelar
+      if (e?.name === "AbortError") return;
       setError(e?.message ?? "Error cargando datos");
     } finally {
       if (inFlight === ac) inFlight = null;
       setLoading(false);
 
-      // ✅ Marca “ya hubo 1 carga” (éxito o error)
+      // ✅ ya hubo primera carga (éxito o error)
       if (!dataReadyOnce.current) {
         dataReadyOnce.current = true;
         setDataReady(true);
@@ -137,7 +136,6 @@ export default function Page() {
   }, [rows.length]);
 
   useEffect(() => {
-    // ⏳ Timer independiente: mínimo 6s sí o sí
     const t = setTimeout(() => setMinSplashDone(true), 6000);
     return () => clearTimeout(t);
   }, []);
@@ -194,7 +192,7 @@ export default function Page() {
     try {
       setMarkingId(containerId);
 
-      // Optimistic UI: lo quita al instante
+      // Optimistic UI
       setRows((prev) => prev.filter((r) => r["Container ID"] !== containerId));
 
       const res = await fetch("/api/regado", {
@@ -207,11 +205,10 @@ export default function Page() {
       const text = await res.text();
       if (!res.ok) throw new Error(text);
 
-      // espera breve para que Sheets actualice
       await new Promise((r) => setTimeout(r, 500));
 
       await load();
-      await loadPerfil(); // ✅ refresca puntos/riegos
+      await loadPerfil();
     } catch (err: any) {
       console.error(err);
       alert(`Error al marcar como regado:\n${err?.message ?? err}`);
@@ -226,8 +223,22 @@ export default function Page() {
     <>
       <Splash visible={splashVisible} />
 
-      <main className="min-h-screen bg-gradient-to-b from-amber-50 via-lime-50 to-emerald-50 p-6 text-stone-700">
-        <div className="max-w-2xl mx-auto">
+      <main
+        className="min-h-screen p-6 text-stone-700 relative overflow-hidden"
+        style={{
+          backgroundImage: "url(/assets/background-danu.png)",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+        }}
+      >
+        {/* 🐝 Abejas entre el fondo y el contenido */}
+        <div className="absolute inset-0 z-10 pointer-events-none">
+          <BeeSwarm count={9} />
+        </div>
+
+        {/* Contenido arriba */}
+        <div className="relative z-20 max-w-2xl mx-auto">
           <div className="flex items-start justify-between gap-3">
             <div>
               <h1 className="text-3xl font-semibold text-emerald-700">
@@ -255,7 +266,7 @@ export default function Page() {
                 await load();
                 await loadPerfil();
               }}
-              className="rounded-xl bg-white shadow-sm border border-emerald-200 px-3 py-2 text-sm hover:bg-emerald-50 transition disabled:opacity-60"
+              className="rounded-xl bg-white/90 backdrop-blur shadow-sm border border-emerald-200 px-3 py-2 text-sm hover:bg-emerald-50 transition disabled:opacity-60"
               disabled={loading}
             >
               {loading ? "Actualizando…" : "↻ Actualizar"}
@@ -270,7 +281,7 @@ export default function Page() {
 
           <div className="mt-6 grid gap-4">
             {!error && agenda.length === 0 && !loading && (
-              <div className="p-4 rounded-xl bg-white shadow-sm border border-emerald-100">
+              <div className="p-4 rounded-xl bg-white/90 backdrop-blur shadow-sm border border-emerald-100">
                 🌿 Hoy las plantas descansan
               </div>
             )}
@@ -278,7 +289,7 @@ export default function Page() {
             {agenda.map((r: any) => (
               <div
                 key={r["Container ID"]}
-                className="p-5 rounded-2xl bg-white shadow-sm border border-emerald-100"
+                className="p-5 rounded-2xl bg-white/90 backdrop-blur shadow-sm border border-emerald-100"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -324,7 +335,7 @@ export default function Page() {
             ))}
           </div>
 
-          <footer className="mt-10 text-sm text-stone-500">
+          <footer className="mt-10 text-sm text-stone-600">
             DANU · Tecnología que germina
           </footer>
         </div>
